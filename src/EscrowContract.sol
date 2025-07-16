@@ -6,6 +6,10 @@ import "../../lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSU
 import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
 import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
 import {Payments} from "../../lib/fws-payments/src/Payments.sol";
+import {console} from "forge-std/console.sol";
+import {PaymentManager} from "./PaymentManager.sol";
+import {ClientFundsManager} from "./ClientFundsManager.sol";
+import {ProviderFundsManager} from "./ProviderFundsManager.sol";
 
 contract EscrowContract is
     Initializable,
@@ -13,18 +17,19 @@ contract EscrowContract is
     OwnableUpgradeable,
     AccessControlUpgradeable
 {
+    using PaymentManager for PaymentManager.PaymentManagerStorage;
+    using ClientFundsManager for ClientFundsManager.ClientFundsManagerStorage;
+    using ProviderFundsManager for ProviderFundsManager.ProviderFundsManagerStorage;
+
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     address public paymentsContract;
-
-    // Mapping to track payment rails by token address and payer
-    mapping(address => mapping(address => uint256)) public paymentRails; // token => from => railId
+    PaymentManager.PaymentManagerStorage private paymentManagerStorage;
+    ClientFundsManager.ClientFundsManagerStorage
+        private clientFundsManagerStorage;
+    ProviderFundsManager.ProviderFundsManagerStorage
+        private providerFundsManagerStorage;
 
     event PaymentsContractSet(address indexed paymentsContract);
-    event PaymentRailCreated(
-        address indexed token,
-        address indexed from,
-        uint256 railId
-    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -52,6 +57,7 @@ contract EscrowContract is
     function setPaymentsContract(address _paymentsContract) external onlyOwner {
         require(_paymentsContract != address(0), "Cannot set zero address");
         paymentsContract = _paymentsContract;
+        paymentManagerStorage.setPaymentsContract(_paymentsContract);
         emit PaymentsContractSet(_paymentsContract);
     }
 
@@ -80,175 +86,221 @@ contract EscrowContract is
      * @param token The ERC20 token address for the payment
      * @param from The address of the payer
      * @param amount The amount of tokens being paid
-     * @param feeAmount One-time fee amount to charge when creating the rail
-     * @param lockupPeriod The lockup period (in epochs) for the rail
      */
-    function registerPayment(
+    function registerMonthlyPayment(
         address token,
         address from,
-        uint256 amount,
-        uint256 feeAmount,
-        uint256 lockupPeriod
+        uint256 amount
+    ) external onlyRole(OPERATOR_ROLE) {
+        paymentManagerStorage.registerMonthlyPayment(
+            token,
+            from,
+            address(this),
+            amount
+        );
+    }
+
+    /**
+     * @notice Settle a payment rail for a specific token and payer
+     * @param token The ERC20 token address of the payment rail
+     * @param from The address of the payer whose rail to settle
+     * @param blockNumber The block number up to which to settle payments
+     * @return totalSettledAmount The total amount settled from the rail
+     * @return totalNetPayeeAmount The net amount received by the payee after fees
+     * @return totalPaymentFee The total fees paid during settlement
+     * @return totalOperatorCommission The total commission paid to operators
+     * @return finalSettledEpoch The final epoch that was settled
+     * @return note Additional notes from the settlement process
+     */
+    function settlePaymentRail(
+        address token,
+        address from,
+        uint256 blockNumber
+    )
+        external
+        onlyRole(OPERATOR_ROLE)
+        returns (
+            uint256 totalSettledAmount,
+            uint256 totalNetPayeeAmount,
+            uint256 totalPaymentFee,
+            uint256 totalOperatorCommission,
+            uint256 finalSettledEpoch,
+            string memory note
+        )
+    {
+        return
+            paymentManagerStorage.settlePaymentRail(token, from, blockNumber);
+    }
+
+    /**
+     * @notice Withdraw tokens from the payments contract to this escrow contract
+     * @param token The ERC20 token address to withdraw
+     * @param amount The amount of tokens to withdraw
+     */
+    function withdrawTokens(
+        address token,
+        uint256 amount
+    ) external onlyRole(OPERATOR_ROLE) {
+        paymentManagerStorage.withdrawTokens(token, amount);
+    }
+
+    /**
+     * @notice Get the rail ID for a specific token and payer
+     * @param token The ERC20 token address
+     * @param from The address of the payer
+     * @return railId The rail ID for the token and payer combination
+     */
+    function getRailId(
+        address token,
+        address from
+    ) external view returns (uint256) {
+        return paymentManagerStorage.getRailId(token, from);
+    }
+
+    /**
+     * @notice Check if a rail exists for a specific token and payer
+     * @param token The ERC20 token address
+     * @param from The address of the payer
+     * @return exists True if the rail exists, false otherwise
+     */
+    function railExists(
+        address token,
+        address from
+    ) external view returns (bool) {
+        return paymentManagerStorage.railExists(token, from);
+    }
+
+    /**
+     * @notice Terminate a payment rail for a specific token and payer
+     * @param token The ERC20 token address of the payment rail
+     * @param from The address of the payer whose rail to terminate
+     */
+    function terminatePaymentRail(
+        address token,
+        address from
+    ) external onlyRole(OPERATOR_ROLE) {
+        paymentManagerStorage.terminateRail(token, from);
+    }
+
+    // ==================== CLIENT FUNDS MANAGER FUNCTIONS ====================
+
+    /**
+     * @notice Deposit security deposit for a client in a specific token
+     * @param client The address of the client
+     * @param token The ERC20 token address
+     * @param amount The amount of tokens to deposit as security deposit
+     */
+    function depositSecurityDeposit(
+        address client,
+        address token,
+        uint256 amount
     ) external {
-        require(paymentsContract != address(0), "Payments contract not set");
-        require(from != address(0), "From address cannot be zero");
-        require(lockupPeriod > 0, "Lockup period must be greater than zero");
-
-        Payments payments = Payments(paymentsContract);
-        _handleRailCreationOrUpdate(
-            payments,
-            token,
-            from,
-            amount,
-            feeAmount,
-            lockupPeriod
-        );
+        clientFundsManagerStorage.depositSecurityDeposit(client, token, amount);
     }
 
     /**
-     * @dev Internal function to handle rail creation or update, reduces stack depth
+     * @notice Unlock security deposit and optionally set refund amount
+     * @param client The address of the client
+     * @param token The ERC20 token address
+     * @param unlockAmount The amount to unlock from security deposit
+     * @param refundAmount The amount to add to refund
      */
-    function _handleRailCreationOrUpdate(
-        Payments payments,
+    function unlockSecurityDeposit(
+        address client,
         address token,
-        address from,
-        uint256 amount,
-        uint256 feeAmount,
-        uint256 lockupPeriod
-    ) internal {
-        // Check if a payment rail already exists for this token and payer
-        uint256 railId = paymentRails[token][from];
-
-        // If no rail exists, create a new one
-        if (railId == 0) {
-            _createNewRail(
-                payments,
-                token,
-                from,
-                amount,
-                feeAmount,
-                lockupPeriod
-            );
-        } else {
-            _updateExistingRail(
-                payments,
-                railId,
-                amount,
-                feeAmount,
-                lockupPeriod
-            );
-        }
-    }
-
-    /**
-     * @dev Creates a new payment rail
-     */
-    function _createNewRail(
-        Payments payments,
-        address token,
-        address from,
-        uint256 amount,
-        uint256 feeAmount,
-        uint256 lockupPeriod
-    ) internal {
-        // Create a new rail with this contract as the recipient and no arbiter
-        uint256 railId = payments.createRail(
-            token,
-            from,
-            address(this), // this contract is the recipient
-            address(0), // no arbiter
-            0 // 0% commission
-        );
-
-        // Store the rail ID in our mapping
-        paymentRails[token][from] = railId;
-
-        // Configure the rail with lockup period and fixed amount
-        payments.modifyRailLockup(
-            railId,
-            lockupPeriod,
-            feeAmount // Initial lockupFixed equals fee amount
-        );
-
-        // If a fee is specified, process it as one-time payment
-        if (feeAmount > 0) {
-            payments.modifyRailPayment(
-                railId,
-                amount, // Set the regular payment rate to amount
-                0 // One-time payment
-            );
-        }
-
-        emit PaymentRailCreated(token, from, railId);
-    }
-
-    /**
-     * @dev Updates an existing payment rail
-     */
-    function _updateExistingRail(
-        Payments payments,
-        uint256 railId,
-        uint256 amount,
-        uint256 feeAmount,
-        uint256 lockupPeriod
-    ) internal {
-        // Get the rail's current info
-        Payments.RailView memory railView = payments.getRail(railId);
-
-        // Verify the rail is still active
-        require(railView.endEpoch == 0, "Existing rail has been terminated");
-
-        // Verify correct endpoints
-        require(railView.to == address(this), "Rail to address mismatch");
-
-        // Update lockup period or fee amount if needed
-        if (
-            railView.lockupPeriod != lockupPeriod ||
-            railView.lockupFixed != feeAmount
-        ) {
-            payments.modifyRailLockup(railId, lockupPeriod, feeAmount);
-        }
-
-        // Update the rail's payment rate if needed
-        if (railView.paymentRate != amount) {
-            payments.modifyRailPayment(
-                railId,
-                amount, // Update to the new rate
-                0 // No additional one-time payment for updates
-            );
-        }
-    }
-
-    /**
-     * @notice Passthrough function to withdraw tokens from the Payments contract to the caller
-     * @param token The ERC20 token address to withdraw
-     * @param amount The amount of tokens to withdraw
-     */
-    function withdraw(
-        address token,
-        uint256 amount
+        uint256 unlockAmount,
+        uint256 refundAmount
     ) external onlyRole(OPERATOR_ROLE) {
-        require(paymentsContract != address(0), "Payments contract not set");
-
-        // Forward the call to the Payments contract
-        Payments(paymentsContract).withdraw(token, amount);
+        clientFundsManagerStorage.unlockSecurityDeposit(
+            client,
+            token,
+            unlockAmount,
+            refundAmount
+        );
     }
 
     /**
-     * @notice Passthrough function to withdraw tokens from the Payments contract to a specified address
-     * @param token The ERC20 token address to withdraw
-     * @param to The address to receive the withdrawn tokens
-     * @param amount The amount of tokens to withdraw
+     * @notice Change refund value for a client and token
+     * @param client The address of the client
+     * @param token The ERC20 token address
+     * @param changeValue The value to change refund by (positive to increase, negative to decrease)
      */
-    function withdrawTo(
+    function changeRefundValue(
+        address client,
         address token,
-        address to,
-        uint256 amount
+        int256 changeValue
     ) external onlyRole(OPERATOR_ROLE) {
-        require(paymentsContract != address(0), "Payments contract not set");
-        require(to != address(0), "Cannot withdraw to zero address");
+        clientFundsManagerStorage.changeRefundValue(client, token, changeValue);
+    }
 
-        // Forward the call to the Payments contract
-        Payments(paymentsContract).withdrawTo(token, to, amount);
+    /**
+     * @notice Withdraw unlocked funds and refund for a client
+     * @param token The ERC20 token address to withdraw
+     */
+    function withdrawClientFunds(address token) external {
+        clientFundsManagerStorage.withdrawFunds(token);
+    }
+
+    /**
+     * @notice Get client funds information for a specific client and token
+     * @param client The address of the client
+     * @param token The ERC20 token address
+     * @return funds The ClientFunds struct containing all fund information
+     */
+    function getClientFunds(
+        address client,
+        address token
+    ) external view returns (ClientFundsManager.ClientFunds memory funds) {
+        return clientFundsManagerStorage.getClientFunds(client, token);
+    }
+
+    /**
+     * @notice Get withdrawable amount for a specific client and token
+     * @param client The address of the client
+     * @param token The ERC20 token address
+     * @return withdrawableAmount The total amount that can be withdrawn
+     */
+    function getClientWithdrawableAmount(
+        address client,
+        address token
+    ) external view returns (uint256 withdrawableAmount) {
+        return clientFundsManagerStorage.getWithdrawableAmount(client, token);
+    }
+
+    // ==================== PROVIDER FUNDS MANAGER FUNCTIONS ====================
+
+    /**
+     * @notice Update provider balance for a specific token
+     * @param provider The address of the provider
+     * @param token The ERC20 token address
+     * @param changeValue The value to change balance by (positive to increase, negative to decrease)
+     */
+    function updateProviderBalance(
+        address provider,
+        address token,
+        int256 changeValue
+    ) external onlyRole(OPERATOR_ROLE) {
+        providerFundsManagerStorage.updateBalance(provider, token, changeValue);
+    }
+
+    /**
+     * @notice Withdraw full balance for a provider
+     * @param token The ERC20 token address to withdraw
+     */
+    function withdrawProviderFunds(address token) external {
+        providerFundsManagerStorage.withdrawFunds(token);
+    }
+
+    /**
+     * @notice Get provider balance for a specific token
+     * @param provider The address of the provider
+     * @param token The ERC20 token address
+     * @return balance The provider's balance for the specified token
+     */
+    function getProviderBalance(
+        address provider,
+        address token
+    ) external view returns (uint256 balance) {
+        return providerFundsManagerStorage.getBalance(provider, token);
     }
 }
