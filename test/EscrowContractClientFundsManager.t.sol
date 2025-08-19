@@ -61,7 +61,8 @@ contract EscrowContractClientFundsManagerTest is Test {
             address(proxyEscrow),
             true,
             20 ether,
-            20 ether
+            20 ether,
+            0
         );
         vm.stopPrank();
     }

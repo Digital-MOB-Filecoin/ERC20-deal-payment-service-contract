@@ -63,7 +63,8 @@ contract EscrowContractProviderFundsManager is Test {
             address(proxyEscrow),
             true,
             20 ether,
-            20 ether
+            20 ether,
+            0
         );
         vm.stopPrank();
     }
@@ -135,6 +136,9 @@ contract EscrowContractProviderFundsManager is Test {
             "Provider token balance should be 0 ether"
         );
 
+        proxyEscrow.withdrawProviderFunds(address(token));
+
+        vm.expectRevert();
         proxyEscrow.withdrawProviderFunds(address(token));
 
         assertEq(

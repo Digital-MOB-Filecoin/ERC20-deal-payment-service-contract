@@ -20,13 +20,25 @@ contract EscrowContractTest is Test {
         proxyEscrow = EscrowContract(address(proxy));
     }
 
-    function testOwnerIsSet() public {
+    function testOwnerIsSet() public view {
         assertEq(proxyEscrow.owner(), address(this));
     }
 
     function testCannotReinitialize() public {
         vm.expectRevert("InvalidInitialization()");
         proxyEscrow.initialize();
+    }
+
+    function testSetPaymentsContract() public {
+        address paymentsContract = makeAddr("payments");
+        proxyEscrow.setPaymentsContract(paymentsContract);
+        assertEq(proxyEscrow.paymentsContract(), paymentsContract);
+    }
+
+    function testSetPaymentsContractNull() public {
+        address paymentsContract = address(0);
+        vm.expectRevert("Cannot set zero address");
+        proxyEscrow.setPaymentsContract(paymentsContract);
     }
 
     function testUpgradeOnlyOwner() public {

@@ -7,7 +7,6 @@ import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpg
 import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
 import {Payments} from "../../lib/fws-payments/src/Payments.sol";
 import {console} from "forge-std/console.sol";
-import {PaymentManager} from "./PaymentManager.sol";
 import {ClientFundsManager} from "./ClientFundsManager.sol";
 import {ProviderFundsManager} from "./ProviderFundsManager.sol";
 
@@ -17,19 +16,61 @@ contract EscrowContract is
     OwnableUpgradeable,
     AccessControlUpgradeable
 {
-    using PaymentManager for PaymentManager.PaymentManagerStorage;
     using ClientFundsManager for ClientFundsManager.ClientFundsManagerStorage;
     using ProviderFundsManager for ProviderFundsManager.ProviderFundsManagerStorage;
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
     address public paymentsContract;
-    PaymentManager.PaymentManagerStorage private paymentManagerStorage;
+
+    // Payment Manager Storage - moved from PaymentManager library
+    mapping(address => mapping(address => uint256)) public paymentRails; // token => from => railId
+
+    /**
+     * @notice Struct containing settlement result data
+     */
+    struct SettlementResult {
+        uint256 totalSettledAmount;
+        uint256 totalNetPayeeAmount;
+        uint256 totalPaymentFee;
+        uint256 totalOperatorCommission;
+        uint256 finalSettledEpoch;
+        string note;
+    }
+
     ClientFundsManager.ClientFundsManagerStorage
         private clientFundsManagerStorage;
     ProviderFundsManager.ProviderFundsManagerStorage
         private providerFundsManagerStorage;
 
+    // Events from PaymentManager
+    event PaymentRailCreated(
+        address indexed token,
+        address indexed from,
+        uint256 railId
+    );
+    event PaymentRailUpdated(
+        address indexed token,
+        address indexed from,
+        uint256 railId,
+        uint256 newAmount
+    );
+    event PaymentRailSettled(
+        address indexed token,
+        address indexed from,
+        uint256 indexed railId,
+        uint256 totalSettledAmount,
+        uint256 totalNetPayeeAmount,
+        uint256 totalPaymentFee,
+        uint256 totalOperatorCommission,
+        uint256 finalSettledEpoch
+    );
+    event TokensWithdrawn(address indexed token, uint256 amount);
+
     event PaymentsContractSet(address indexed paymentsContract);
+
+    event ClientSetAddress(string encryptedData);
+
+    event ProviderSetAddress(string encryptedData);
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -57,7 +98,6 @@ contract EscrowContract is
     function setPaymentsContract(address _paymentsContract) external onlyOwner {
         require(_paymentsContract != address(0), "Cannot set zero address");
         paymentsContract = _paymentsContract;
-        paymentManagerStorage.setPaymentsContract(_paymentsContract);
         emit PaymentsContractSet(_paymentsContract);
     }
 
@@ -82,22 +122,81 @@ contract EscrowContract is
     }
 
     /**
-     * @notice Register a payment and create payment rail if needed
+     * @notice Create a payment rail for a specific token and payer
      * @param token The ERC20 token address for the payment
      * @param from The address of the payer
      * @param amount The amount of tokens being paid
      */
-    function registerMonthlyPayment(
+    function createPaymentRail(
         address token,
         address from,
         uint256 amount
     ) external onlyRole(OPERATOR_ROLE) {
-        paymentManagerStorage.registerMonthlyPayment(
+        require(paymentsContract != address(0), "Payments contract not set");
+        require(from != address(0), "From address cannot be zero");
+        require(
+            address(this) != address(0),
+            "Recipient address cannot be zero"
+        );
+        uint256 railId = paymentRails[token][from];
+
+        require(
+            railId == 0,
+            "Rail already exists for this token and from address"
+        );
+
+        Payments payments = Payments(paymentsContract);
+
+        railId = payments.createRail(
             token,
             from,
             address(this),
-            amount
+            address(0), // no arbiter
+            0, // 0% commission
+            address(0)
         );
+
+        // Store the rail ID in our mapping
+        paymentRails[token][from] = railId;
+
+        payments.modifyRailPayment(
+            railId,
+            amount, // Set the regular payment rate to amount
+            0 // One-time payment
+        );
+
+        emit PaymentRailCreated(token, from, railId);
+    }
+
+    /**
+     * @notice Update a payment rail for a specific token and payer
+     * @param token The ERC20 token address for the payment
+     * @param from The address of the payer
+     * @param amount The amount of tokens being paid
+     */
+    function updatePaymentRail(
+        address token,
+        address from,
+        uint256 amount
+    ) external onlyRole(OPERATOR_ROLE) {
+        require(paymentsContract != address(0), "Payments contract not set");
+        require(from != address(0), "From address cannot be zero");
+        require(token != address(0), "Token address cannot be zero");
+        uint256 railId = paymentRails[token][from];
+
+        require(
+            railId != 0,
+            "Rail does not exist for this token and from address"
+        );
+
+        Payments payments = Payments(paymentsContract);
+        payments.modifyRailPayment(
+            railId,
+            amount, // Update the regular payment rate to amount
+            0 // One-time payment
+        );
+
+        emit PaymentRailUpdated(token, from, railId, amount);
     }
 
     /**
@@ -105,12 +204,7 @@ contract EscrowContract is
      * @param token The ERC20 token address of the payment rail
      * @param from The address of the payer whose rail to settle
      * @param blockNumber The block number up to which to settle payments
-     * @return totalSettledAmount The total amount settled from the rail
-     * @return totalNetPayeeAmount The net amount received by the payee after fees
-     * @return totalPaymentFee The total fees paid during settlement
-     * @return totalOperatorCommission The total commission paid to operators
-     * @return finalSettledEpoch The final epoch that was settled
-     * @return note Additional notes from the settlement process
+     * @return result The settlement result containing all settlement data
      */
     function settlePaymentRail(
         address token,
@@ -118,18 +212,41 @@ contract EscrowContract is
         uint256 blockNumber
     )
         external
+        payable
         onlyRole(OPERATOR_ROLE)
-        returns (
-            uint256 totalSettledAmount,
-            uint256 totalNetPayeeAmount,
-            uint256 totalPaymentFee,
-            uint256 totalOperatorCommission,
-            uint256 finalSettledEpoch,
-            string memory note
-        )
+        returns (SettlementResult memory result)
     {
-        return
-            paymentManagerStorage.settlePaymentRail(token, from, blockNumber);
+        require(paymentsContract != address(0), "Payments contract not set");
+        require(from != address(0), "From address cannot be zero");
+        uint256 railId = paymentRails[token][from];
+        require(railId != 0, "Rail does not exist");
+
+        Payments payments = Payments(paymentsContract);
+        uint256 networkFee = payments.NETWORK_FEE();
+
+        (
+            result.totalSettledAmount,
+            result.totalNetPayeeAmount,
+            result.totalOperatorCommission,
+            result.finalSettledEpoch,
+            result.note
+        ) = payments.settleRail{value: networkFee}(railId, blockNumber);
+
+        // totalPaymentFee is not returned by the Payments contract, so we set it to 0
+        result.totalPaymentFee = 0;
+
+        emit PaymentRailSettled(
+            token,
+            from,
+            railId,
+            result.totalSettledAmount,
+            result.totalNetPayeeAmount,
+            result.totalPaymentFee,
+            result.totalOperatorCommission,
+            result.finalSettledEpoch
+        );
+
+        return result;
     }
 
     /**
@@ -141,7 +258,12 @@ contract EscrowContract is
         address token,
         uint256 amount
     ) external onlyRole(OPERATOR_ROLE) {
-        paymentManagerStorage.withdrawTokens(token, amount);
+        require(paymentsContract != address(0), "Payments contract not set");
+
+        Payments payments = Payments(paymentsContract);
+        payments.withdraw(token, amount);
+
+        emit TokensWithdrawn(token, amount);
     }
 
     /**
@@ -154,7 +276,7 @@ contract EscrowContract is
         address token,
         address from
     ) external view returns (uint256) {
-        return paymentManagerStorage.getRailId(token, from);
+        return paymentRails[token][from];
     }
 
     /**
@@ -167,7 +289,7 @@ contract EscrowContract is
         address token,
         address from
     ) external view returns (bool) {
-        return paymentManagerStorage.railExists(token, from);
+        return paymentRails[token][from] != 0;
     }
 
     /**
@@ -179,7 +301,14 @@ contract EscrowContract is
         address token,
         address from
     ) external onlyRole(OPERATOR_ROLE) {
-        paymentManagerStorage.terminateRail(token, from);
+        require(paymentsContract != address(0), "Payments contract not set");
+        require(from != address(0), "From address cannot be zero");
+
+        uint256 railId = paymentRails[token][from];
+        require(railId != 0, "Rail does not exist");
+
+        Payments payments = Payments(paymentsContract);
+        payments.terminateRail(railId);
     }
 
     // ==================== CLIENT FUNDS MANAGER FUNCTIONS ====================
@@ -302,5 +431,21 @@ contract EscrowContract is
         address token
     ) external view returns (uint256 balance) {
         return providerFundsManagerStorage.getBalance(provider, token);
+    }
+
+    /**
+     * @notice Set client address with encrypted data
+     * @param encryptedData The encrypted address data
+     */
+    function setClientAddress(string calldata encryptedData) external {
+        emit ClientSetAddress(encryptedData);
+    }
+
+    /**
+     * @notice Set provider address with encrypted data
+     * @param encryptedData The encrypted address data
+     */
+    function setProviderAddress(string calldata encryptedData) external {
+        emit ProviderSetAddress(encryptedData);
     }
 }

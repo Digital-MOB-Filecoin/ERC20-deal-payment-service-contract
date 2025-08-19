@@ -1,0 +1,3 @@
+[submodule "lib/fws-payments"]
+	path = lib/fws-payments
+	url = https://github.com/FilOzone/fws-payments
