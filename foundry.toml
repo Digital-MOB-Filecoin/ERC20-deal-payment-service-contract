@@ -9,3 +9,11 @@ script = "script"
 optimizer = true
 optimizer_runs = 200
 via_ir = true  # Enable compilation through IR
+
+# For dependencies
+remappings = [
+    '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',
+    '@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/',
+    '@fws-payments/=lib/fws-payments/src/',
+    'forge-std/=lib/forge-std/src/',
+]

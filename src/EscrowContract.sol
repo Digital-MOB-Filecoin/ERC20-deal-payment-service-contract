@@ -1,11 +1,11 @@
 // SPDX-License-Identifier: UNLICENSED
 pragma solidity ^0.8.20;
 
-import "../../lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/Initializable.sol";
-import "../../lib/openzeppelin-contracts-upgradeable/contracts/proxy/utils/UUPSUpgradeable.sol";
-import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/OwnableUpgradeable.sol";
-import "../../lib/openzeppelin-contracts-upgradeable/contracts/access/AccessControlUpgradeable.sol";
-import {Payments} from "../../lib/fws-payments/src/Payments.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
+import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
+import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {Payments} from "@fws-payments/Payments.sol";
 import {console} from "forge-std/console.sol";
 import {ClientFundsManager} from "./ClientFundsManager.sol";
 import {ProviderFundsManager} from "./ProviderFundsManager.sol";
@@ -57,6 +57,15 @@ contract EscrowContract is
     event PaymentRailSettled(
         address indexed token,
         address indexed from,
+        uint256 indexed railId,
+        uint256 totalSettledAmount,
+        uint256 totalNetPayeeAmount,
+        uint256 totalPaymentFee,
+        uint256 totalOperatorCommission,
+        uint256 finalSettledEpoch
+    );
+
+    event PaymentRailSettledByRailId(
         uint256 indexed railId,
         uint256 totalSettledAmount,
         uint256 totalNetPayeeAmount,
@@ -250,6 +259,50 @@ contract EscrowContract is
     }
 
     /**
+     * @notice Settle a payment rail by rail id, useful if payment rail is terminated before settlement
+     * @param railId The ID of the payment rail
+     * @param blockNumber The block number up to which to settle payments
+     * @return result The settlement result containing all settlement data
+     */
+    function settlePaymentRailByRailId(
+        uint256 railId,
+        uint256 blockNumber
+    )
+        external
+        payable
+        onlyRole(OPERATOR_ROLE)
+        returns (SettlementResult memory result)
+    {
+        require(paymentsContract != address(0), "Payments contract not set");
+        require(railId != 0, "Rail does not exist");
+
+        Payments payments = Payments(paymentsContract);
+        uint256 networkFee = payments.NETWORK_FEE();
+
+        (
+            result.totalSettledAmount,
+            result.totalNetPayeeAmount,
+            result.totalOperatorCommission,
+            result.finalSettledEpoch,
+            result.note
+        ) = payments.settleRail{value: networkFee}(railId, blockNumber);
+
+        // totalPaymentFee is not returned by the Payments contract, so we set it to 0
+        result.totalPaymentFee = 0;
+
+        emit PaymentRailSettledByRailId(
+            railId,
+            result.totalSettledAmount,
+            result.totalNetPayeeAmount,
+            result.totalPaymentFee,
+            result.totalOperatorCommission,
+            result.finalSettledEpoch
+        );
+
+        return result;
+    }
+
+    /**
      * @notice Withdraw tokens from the payments contract to this escrow contract
      * @param token The ERC20 token address to withdraw
      * @param amount The amount of tokens to withdraw
@@ -309,6 +362,7 @@ contract EscrowContract is
 
         Payments payments = Payments(paymentsContract);
         payments.terminateRail(railId);
+        paymentRails[token][from] = 0;
     }
 
     // ==================== CLIENT FUNDS MANAGER FUNCTIONS ====================

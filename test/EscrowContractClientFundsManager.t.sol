@@ -4,16 +4,14 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import "../src/EscrowContract.sol";
 import "../src/test/mocks/MockERC20.sol";
-import "../../lib/openzeppelin-contracts/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Payments} from "../../lib/fws-payments/src/Payments.sol";
+import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
+import {Payments} from "@fws-payments/Payments.sol";
 
 contract EscrowContractClientFundsManagerTest is Test {
     EscrowContract implementation;
     ERC1967Proxy escrowProxy;
     EscrowContract proxyEscrow;
 
-    Payments paymentsImplementation;
-    ERC1967Proxy paymentsProxy;
     Payments proxyPayments;
 
     MockERC20 token;
@@ -33,15 +31,8 @@ contract EscrowContractClientFundsManagerTest is Test {
         token.mint(client, 200 ether);
 
         // Deploy Payments contract
-        paymentsImplementation = new Payments();
-        bytes memory paymentsData = abi.encodeWithSelector(
-            Payments.initialize.selector
-        );
-        paymentsProxy = new ERC1967Proxy(
-            address(paymentsImplementation),
-            paymentsData
-        );
-        proxyPayments = Payments(address(paymentsProxy));
+
+        proxyPayments = new Payments();
 
         // Deploy EscrowContract
         implementation = new EscrowContract();
