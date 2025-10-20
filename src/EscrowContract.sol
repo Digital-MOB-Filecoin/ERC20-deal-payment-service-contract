@@ -5,6 +5,8 @@ import "@openzeppelin/contracts-upgradeable/proxy/utils/Initializable.sol";
 import "@openzeppelin/contracts-upgradeable/proxy/utils/UUPSUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
+import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import {Payments} from "@fws-payments/Payments.sol";
 import {console} from "forge-std/console.sol";
 import {ClientFundsManager} from "./ClientFundsManager.sol";
@@ -18,12 +20,29 @@ contract EscrowContract is
 {
     using ClientFundsManager for ClientFundsManager.ClientFundsManagerStorage;
     using ProviderFundsManager for ProviderFundsManager.ProviderFundsManagerStorage;
+    using SafeERC20 for IERC20;
 
     bytes32 public constant OPERATOR_ROLE = keccak256("OPERATOR_ROLE");
+    uint256 public fee;
+
     address public paymentsContract;
 
     // Payment Manager Storage - moved from PaymentManager library
     mapping(address => mapping(address => uint256)) public paymentRails; // token => from => railId
+
+    /**
+     * @notice Struct containing fee item data
+     */
+    struct FeeItem {
+        uint256 totalToPay;
+        uint256 totalPaid;
+    }
+
+    // Address to receive fees
+    address public feeBeneficiaryAddress;
+
+    // Mapping to track fees by token address
+    mapping(address => FeeItem) public fees; // token => FeeItem
 
     /**
      * @notice Struct containing settlement result data
@@ -80,6 +99,23 @@ contract EscrowContract is
     event ClientSetAddress(string encryptedData);
 
     event ProviderSetAddress(string encryptedData);
+
+    // Events for fee management
+    event FeeValueUpdated(uint256 oldFee, uint256 newFee);
+    event FeeUpdated(
+        address indexed token,
+        int256 amount,
+        uint256 newTotalToPay
+    );
+    event FeeBeneficiaryAddressSet(
+        address indexed oldAddress,
+        address indexed newAddress
+    );
+    event FeesWithdrawn(
+        address indexed token,
+        address indexed beneficiary,
+        uint256 amount
+    );
 
     /// @custom:oz-upgrades-unsafe-allow constructor
     constructor() {
@@ -501,5 +537,94 @@ contract EscrowContract is
      */
     function setProviderAddress(string calldata encryptedData) external {
         emit ProviderSetAddress(encryptedData);
+    }
+
+    // ==================== ADMIN FUNCTIONS ====================
+    /**
+     * @notice Set the fee amount
+     * @param _fee The new fee amount
+     */
+    function setFeeValue(uint256 _fee) external onlyRole(OPERATOR_ROLE) {
+        uint256 oldFee = fee;
+        fee = _fee;
+
+        emit FeeValueUpdated(oldFee, _fee);
+    }
+
+    /**
+     * @notice Update fee for a specific token
+     * @param token The ERC20 token address
+     * @param amount The amount to add to totalToPay (can be positive or negative)
+     */
+    function updateFee(
+        address token,
+        int256 amount
+    ) external onlyRole(OPERATOR_ROLE) {
+        require(token != address(0), "Token address cannot be zero");
+
+        FeeItem storage feeItem = fees[token];
+
+        if (amount < 0 && feeItem.totalToPay == 0) {
+            require(false, "Cannot reduce fee for non-existent token");
+        }
+
+        if (amount >= 0) {
+            feeItem.totalToPay += uint256(amount);
+        } else {
+            uint256 absAmount = uint256(-amount);
+            require(
+                feeItem.totalToPay >= absAmount,
+                "Cannot reduce fee below zero"
+            );
+            feeItem.totalToPay -= absAmount;
+        }
+
+        emit FeeUpdated(token, amount, feeItem.totalToPay);
+    }
+
+    /**
+     * @notice Set the fee beneficiary address
+     * @param _feeBeneficiaryAddress The address that will receive fees
+     */
+    function setFeeBeneficiaryAddress(
+        address _feeBeneficiaryAddress
+    ) external onlyRole(OPERATOR_ROLE) {
+        require(
+            _feeBeneficiaryAddress != address(0),
+            "Fee beneficiary address cannot be zero"
+        );
+        address oldAddress = feeBeneficiaryAddress;
+        feeBeneficiaryAddress = _feeBeneficiaryAddress;
+
+        emit FeeBeneficiaryAddressSet(oldAddress, _feeBeneficiaryAddress);
+    }
+
+    /**
+     * @notice Withdraw accumulated fees for a specific token
+     * @param token The ERC20 token address to withdraw fees for
+     */
+    function withdrawFees(address token) external {
+        require(
+            msg.sender == feeBeneficiaryAddress,
+            "Only fee beneficiary can withdraw fees"
+        );
+        require(
+            feeBeneficiaryAddress != address(0),
+            "Fee beneficiary address not set"
+        );
+        require(token != address(0), "Token address cannot be zero");
+
+        FeeItem storage feeItem = fees[token];
+        uint256 withdrawableAmount = feeItem.totalToPay - feeItem.totalPaid;
+
+        require(withdrawableAmount > 0, "No fees to withdraw");
+
+        // Update total paid before transfer
+        feeItem.totalPaid = feeItem.totalToPay;
+
+        // Transfer tokens to fee beneficiary
+        IERC20(token).safeTransfer(feeBeneficiaryAddress, withdrawableAmount);
+
+        emit FeesWithdrawn(token, feeBeneficiaryAddress, withdrawableAmount);
     }
 }
