@@ -5,14 +5,14 @@ import "forge-std/Test.sol";
 import "../src/EscrowContract.sol";
 import "../src/test/mocks/MockERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 
 contract EscrowContractClientFundsManagerTest is Test {
     EscrowContract implementation;
     ERC1967Proxy escrowProxy;
     EscrowContract proxyEscrow;
 
-    Payments proxyPayments;
+    FilecoinPayV1 proxyPayments;
 
     MockERC20 token;
 
@@ -32,7 +32,7 @@ contract EscrowContractClientFundsManagerTest is Test {
 
         // Deploy Payments contract
 
-        proxyPayments = new Payments();
+        proxyPayments = new FilecoinPayV1();
 
         // Deploy EscrowContract
         implementation = new EscrowContract();
@@ -48,7 +48,7 @@ contract EscrowContractClientFundsManagerTest is Test {
         // Add operator role to EscrowContract for Payments
         vm.startPrank(client);
         proxyPayments.setOperatorApproval(
-            address(token),
+            IERC20(token),
             address(proxyEscrow),
             true,
             20 ether,
@@ -69,12 +69,12 @@ contract EscrowContractClientFundsManagerTest is Test {
         vm.startPrank(client);
         token.approve(address(proxyEscrow), 200 ether);
 
-        proxyEscrow.depositSecurityDeposit(client, address(token), amount);
+        proxyEscrow.depositSecurityDeposit(IERC20(token), client, amount);
         vm.stopPrank();
 
         // Check that the security deposit was recorded
         ClientFundsManager.ClientFunds memory clientFunds = proxyEscrow
-            .getClientFunds(client, address(token));
+            .getClientFunds(IERC20(token), client);
         assertEq(
             clientFunds.securityDeposit,
             amount,
@@ -93,12 +93,12 @@ contract EscrowContractClientFundsManagerTest is Test {
         vm.startPrank(client);
         token.approve(address(proxyEscrow), 200 ether);
 
-        proxyEscrow.depositSecurityDeposit(client, address(token), amount);
+        proxyEscrow.depositSecurityDeposit(IERC20(token), client, amount);
         vm.stopPrank();
 
         // Check that the security deposit was recorded
         ClientFundsManager.ClientFunds memory clientFunds = proxyEscrow
-            .getClientFunds(client, address(token));
+            .getClientFunds(IERC20(token), client);
         assertEq(
             clientFunds.securityDeposit,
             amount,
@@ -110,8 +110,8 @@ contract EscrowContractClientFundsManagerTest is Test {
         uint256 refundAmount = 0.3 ether;
         vm.startPrank(operator);
         uint256 withdrawableAmount = proxyEscrow.getClientWithdrawableAmount(
-            client,
-            address(token)
+            IERC20(token),
+            client
         );
 
         assertEq(
@@ -121,16 +121,16 @@ contract EscrowContractClientFundsManagerTest is Test {
         );
 
         proxyEscrow.unlockSecurityDeposit(
+            IERC20(token),
             client,
-            address(token),
             unlockAmount,
             refundAmount
         );
         vm.stopPrank();
 
         withdrawableAmount = proxyEscrow.getClientWithdrawableAmount(
-            client,
-            address(token)
+            IERC20(token),
+            client
         );
 
         assertEq(
@@ -139,7 +139,7 @@ contract EscrowContractClientFundsManagerTest is Test {
             "Withdrawable amount should match, after unlock"
         );
 
-        clientFunds = proxyEscrow.getClientFunds(client, address(token));
+        clientFunds = proxyEscrow.getClientFunds(IERC20(token), client);
         assertEq(
             clientFunds.securityDeposit,
             amount - unlockAmount,
@@ -159,7 +159,7 @@ contract EscrowContractClientFundsManagerTest is Test {
             "Client token balance should be 199 ether"
         );
 
-        proxyEscrow.withdrawClientFunds(address(token));
+        proxyEscrow.withdrawClientFunds(IERC20(token));
 
         assertEq(
             token.balanceOf(address(client)),

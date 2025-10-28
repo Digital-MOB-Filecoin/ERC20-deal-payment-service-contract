@@ -14,6 +14,6 @@ via_ir = true  # Enable compilation through IR
 remappings = [
     '@openzeppelin/contracts/=lib/openzeppelin-contracts/contracts/',
     '@openzeppelin/contracts-upgradeable/=lib/openzeppelin-contracts-upgradeable/contracts/',
-    '@fws-payments/=lib/fws-payments/src/',
+    '@filecoin-pay/=lib/filecoin-pay/src/',
     'forge-std/=lib/forge-std/src/',
 ]

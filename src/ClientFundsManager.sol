@@ -59,21 +59,21 @@ library ClientFundsManager {
      */
     function depositSecurityDeposit(
         ClientFundsManagerStorage storage storage_,
+        IERC20 token,
         address client,
-        address token,
         uint256 amount
     ) internal {
         require(client != address(0), "Client address cannot be zero");
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
         require(amount > 0, "Amount must be greater than zero");
 
         // Transfer tokens from client to this contract
-        IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
+        token.safeTransferFrom(msg.sender, address(this), amount);
 
         // Increase security deposit
-        storage_.clientFunds[client][token].securityDeposit += amount;
+        storage_.clientFunds[client][address(token)].securityDeposit += amount;
 
-        emit SecurityDepositDeposited(client, token, amount);
+        emit SecurityDepositDeposited(client, address(token), amount);
     }
 
     /**
@@ -86,15 +86,17 @@ library ClientFundsManager {
      */
     function unlockSecurityDeposit(
         ClientFundsManagerStorage storage storage_,
+        IERC20 token,
         address client,
-        address token,
         uint256 unlockAmount,
         uint256 refundAmount
     ) internal {
         require(client != address(0), "Client address cannot be zero");
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
-        ClientFunds storage clientFunds = storage_.clientFunds[client][token];
+        ClientFunds storage clientFunds = storage_.clientFunds[client][
+            address(token)
+        ];
 
         require(
             unlockAmount <= clientFunds.securityDeposit,
@@ -111,7 +113,12 @@ library ClientFundsManager {
         // Increase refund
         clientFunds.refund += refundAmount;
 
-        emit SecurityDepositUnlocked(client, token, unlockAmount, refundAmount);
+        emit SecurityDepositUnlocked(
+            client,
+            address(token),
+            unlockAmount,
+            refundAmount
+        );
     }
 
     /**
@@ -123,14 +130,16 @@ library ClientFundsManager {
      */
     function changeRefundValue(
         ClientFundsManagerStorage storage storage_,
+        IERC20 token,
         address client,
-        address token,
         int256 changeValue
     ) internal {
         require(client != address(0), "Client address cannot be zero");
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
-        ClientFunds storage clientFunds = storage_.clientFunds[client][token];
+        ClientFunds storage clientFunds = storage_.clientFunds[client][
+            address(token)
+        ];
 
         if (changeValue >= 0) {
             // Increase refund
@@ -145,7 +154,12 @@ library ClientFundsManager {
             clientFunds.refund -= decreaseAmount;
         }
 
-        emit RefundValueChanged(client, token, changeValue, clientFunds.refund);
+        emit RefundValueChanged(
+            client,
+            address(token),
+            changeValue,
+            clientFunds.refund
+        );
     }
 
     /**
@@ -155,12 +169,14 @@ library ClientFundsManager {
      */
     function withdrawFunds(
         ClientFundsManagerStorage storage storage_,
-        address token
+        IERC20 token
     ) internal {
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
         address client = msg.sender;
-        ClientFunds storage clientFunds = storage_.clientFunds[client][token];
+        ClientFunds storage clientFunds = storage_.clientFunds[client][
+            address(token)
+        ];
 
         uint256 withdrawableAmount = clientFunds.refund;
         require(withdrawableAmount > 0, "No funds available for withdrawal");
@@ -169,9 +185,9 @@ library ClientFundsManager {
         clientFunds.refund = 0;
 
         // Transfer tokens to client
-        IERC20(token).safeTransfer(client, withdrawableAmount);
+        token.safeTransfer(client, withdrawableAmount);
 
-        emit FundsWithdrawn(client, token, withdrawableAmount);
+        emit FundsWithdrawn(client, address(token), withdrawableAmount);
     }
 
     /**
@@ -183,10 +199,10 @@ library ClientFundsManager {
      */
     function getClientFunds(
         ClientFundsManagerStorage storage storage_,
-        address client,
-        address token
+        IERC20 token,
+        address client
     ) internal view returns (ClientFunds memory funds) {
-        return storage_.clientFunds[client][token];
+        return storage_.clientFunds[client][address(token)];
     }
 
     /**
@@ -198,10 +214,12 @@ library ClientFundsManager {
      */
     function getWithdrawableAmount(
         ClientFundsManagerStorage storage storage_,
-        address client,
-        address token
+        IERC20 token,
+        address client
     ) internal view returns (uint256 withdrawableAmount) {
-        ClientFunds storage clientFunds = storage_.clientFunds[client][token];
+        ClientFunds storage clientFunds = storage_.clientFunds[client][
+            address(token)
+        ];
         return clientFunds.refund;
     }
 }

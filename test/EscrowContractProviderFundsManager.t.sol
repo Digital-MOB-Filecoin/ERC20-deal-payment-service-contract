@@ -5,14 +5,14 @@ import "forge-std/Test.sol";
 import "../src/EscrowContract.sol";
 import "../src/test/mocks/MockERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 
 contract EscrowContractProviderFundsManager is Test {
     EscrowContract implementation;
     ERC1967Proxy escrowProxy;
     EscrowContract proxyEscrow;
 
-    Payments proxyPayments;
+    FilecoinPayV1 proxyPayments;
 
     MockERC20 token;
 
@@ -33,7 +33,7 @@ contract EscrowContractProviderFundsManager is Test {
         token.mint(client, 200 ether);
 
         // Deploy Payments contract
-        proxyPayments = new Payments();
+        proxyPayments = new FilecoinPayV1();
 
         // Deploy EscrowContract
         implementation = new EscrowContract();
@@ -49,7 +49,7 @@ contract EscrowContractProviderFundsManager is Test {
         // Add operator role to EscrowContract for Payments
         vm.startPrank(client);
         proxyPayments.setOperatorApproval(
-            address(token),
+            IERC20(token),
             address(proxyEscrow),
             true,
             20 ether,
@@ -70,12 +70,12 @@ contract EscrowContractProviderFundsManager is Test {
         vm.startPrank(client);
         token.approve(address(proxyEscrow), 200 ether);
 
-        proxyEscrow.depositSecurityDeposit(client, address(token), amount);
+        proxyEscrow.depositSecurityDeposit(IERC20(token), client, amount);
         vm.stopPrank();
 
         // Check that the security deposit was recorded
         ClientFundsManager.ClientFunds memory clientFunds = proxyEscrow
-            .getClientFunds(client, address(token));
+            .getClientFunds(IERC20(token), client);
         assertEq(
             clientFunds.securityDeposit,
             amount,
@@ -90,8 +90,8 @@ contract EscrowContractProviderFundsManager is Test {
         vm.startPrank(operator);
 
         proxyEscrow.unlockSecurityDeposit(
+            IERC20(token),
             client,
-            address(token),
             unlockAmount,
             refundAmount
         );
@@ -99,18 +99,18 @@ contract EscrowContractProviderFundsManager is Test {
 
         vm.startPrank(client);
 
-        proxyEscrow.withdrawClientFunds(address(token));
+        proxyEscrow.withdrawClientFunds(IERC20(token));
         vm.stopPrank();
 
         proxyEscrow.updateProviderBalance(
+            IERC20(token),
             provider,
-            address(token),
             int256(payoutAmount)
         );
 
         uint256 withdrawableAmount = proxyEscrow.getProviderBalance(
-            provider,
-            address(token)
+            IERC20(token),
+            provider
         );
 
         assertEq(
@@ -126,10 +126,10 @@ contract EscrowContractProviderFundsManager is Test {
             "Provider token balance should be 0 ether"
         );
 
-        proxyEscrow.withdrawProviderFunds(address(token));
+        proxyEscrow.withdrawProviderFunds(IERC20(token));
 
         vm.expectRevert();
-        proxyEscrow.withdrawProviderFunds(address(token));
+        proxyEscrow.withdrawProviderFunds(IERC20(token));
 
         assertEq(
             token.balanceOf(address(provider)),

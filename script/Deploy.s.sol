@@ -27,7 +27,7 @@ contract Deploy is Script {
         address operator = address(0xF7f7B16aADC8c528C0e49f26afC231FEC33326e7);
 
         // Deploy Payments contract
-        Payments payments = new Payments();
+        FilecoinPayV1 payments = new FilecoinPayV1();
 
         // Deploy EscrowContract
         EscrowContract implementation = new EscrowContract();

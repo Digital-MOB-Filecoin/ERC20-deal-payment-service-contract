@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "../src/EscrowContract.sol";
 import "../src/test/mocks/MockERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 import {console} from "forge-std/console.sol";
 
 contract EscrowContractProviderFundsManager is Test {
@@ -13,7 +13,7 @@ contract EscrowContractProviderFundsManager is Test {
     ERC1967Proxy escrowProxy;
     EscrowContract proxyEscrow;
 
-    Payments proxyPayments;
+    FilecoinPayV1 proxyPayments;
 
     MockERC20 token;
 
@@ -34,7 +34,7 @@ contract EscrowContractProviderFundsManager is Test {
         token.mint(client, 200 ether);
 
         // Deploy Payments contract
-        proxyPayments = new Payments();
+        proxyPayments = new FilecoinPayV1();
 
         // Deploy EscrowContract
         implementation = new EscrowContract();
@@ -50,7 +50,7 @@ contract EscrowContractProviderFundsManager is Test {
         // Add operator role to EscrowContract for Payments
         vm.startPrank(client);
         proxyPayments.setOperatorApproval(
-            address(token),
+            IERC20(token),
             address(proxyEscrow),
             true,
             20 ether,
@@ -88,7 +88,7 @@ contract EscrowContractProviderFundsManager is Test {
     function testUpdateFee() public {
         int256 newFee = 200;
         vm.startPrank(operator);
-        proxyEscrow.updateFee(address(token), newFee);
+        proxyEscrow.updateFee(IERC20(token), newFee);
         vm.stopPrank();
         (uint256 totalToPay, uint256 totalPaid) = proxyEscrow.fees(
             address(token)
@@ -108,17 +108,17 @@ contract EscrowContractProviderFundsManager is Test {
         vm.startPrank(client);
         token.approve(address(proxyEscrow), 200 ether);
 
-        proxyEscrow.depositSecurityDeposit(client, address(token), amount);
+        proxyEscrow.depositSecurityDeposit(IERC20(token), client, amount);
         vm.stopPrank();
 
         // Operator updates the fee to be paid
         vm.startPrank(operator);
-        proxyEscrow.updateFee(address(token), feeAmount);
+        proxyEscrow.updateFee(IERC20(token), feeAmount);
         proxyEscrow.setFeeBeneficiaryAddress(newBeneficiary);
         vm.stopPrank();
 
         vm.startPrank(newBeneficiary);
-        proxyEscrow.withdrawFees(address(token));
+        proxyEscrow.withdrawFees(IERC20(token));
         vm.stopPrank();
 
         assertEq(

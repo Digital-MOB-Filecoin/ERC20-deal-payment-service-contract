@@ -2,7 +2,7 @@
 pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 import "../../src/EscrowContract.sol";
 
 /**
@@ -21,18 +21,22 @@ contract RailTestHelper is Test {
      */
     function validateRailCreation(
         EscrowContract proxyEscrow,
-        Payments proxyPayments,
+        FilecoinPayV1 proxyPayments,
         address token,
         address client,
         uint256 amount
     ) internal view returns (uint256 railId) {
         // Check that the rail was created
-        railId = proxyEscrow.getRailId(token, client);
+        railId = proxyEscrow.getRailId(IERC20(token), client);
         assertGt(railId, 0, "Payment rail should have been created");
 
         // Check the rail details from the Payments contract
-        Payments.RailView memory railView = proxyPayments.getRail(railId);
-        assertEq(railView.token, token, "Token address in rail should match");
+        FilecoinPayV1.RailView memory railView = proxyPayments.getRail(railId);
+        assertEq(
+            address(railView.token),
+            token,
+            "Token address in rail should match"
+        );
         assertEq(
             railView.from,
             client,
@@ -82,7 +86,7 @@ contract RailTestHelper is Test {
             "Net Payee Amount should match expected"
         );
         assertEq(
-            result.totalPaymentFee,
+            result.totalNetworkFee,
             expectedPaymentFee,
             "Payment Fee should match expected"
         );

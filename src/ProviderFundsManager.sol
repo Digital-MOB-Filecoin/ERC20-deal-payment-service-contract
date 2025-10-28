@@ -40,18 +40,20 @@ library ProviderFundsManager {
      */
     function updateBalance(
         ProviderFundsManagerStorage storage storage_,
+        IERC20 token,
         address provider,
-        address token,
         int256 changeValue
     ) internal {
         require(provider != address(0), "Provider address cannot be zero");
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
-        uint256 currentBalance = storage_.providerBalances[provider][token];
+        uint256 currentBalance = storage_.providerBalances[provider][
+            address(token)
+        ];
 
         if (changeValue >= 0) {
             // Increase balance
-            storage_.providerBalances[provider][token] =
+            storage_.providerBalances[provider][address(token)] =
                 currentBalance +
                 uint256(changeValue);
         } else {
@@ -61,16 +63,16 @@ library ProviderFundsManager {
                 decreaseAmount <= currentBalance,
                 "Cannot decrease balance below zero"
             );
-            storage_.providerBalances[provider][token] =
+            storage_.providerBalances[provider][address(token)] =
                 currentBalance -
                 decreaseAmount;
         }
 
         emit BalanceUpdated(
             provider,
-            token,
+            address(token),
             changeValue,
-            storage_.providerBalances[provider][token]
+            storage_.providerBalances[provider][address(token)]
         );
     }
 
@@ -81,22 +83,22 @@ library ProviderFundsManager {
      */
     function withdrawFunds(
         ProviderFundsManagerStorage storage storage_,
-        address token
+        IERC20 token
     ) internal {
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
         address provider = msg.sender;
-        uint256 balance = storage_.providerBalances[provider][token];
+        uint256 balance = storage_.providerBalances[provider][address(token)];
 
         require(balance > 0, "No funds available for withdrawal");
 
         // Reset balance to 0
-        storage_.providerBalances[provider][token] = 0;
+        storage_.providerBalances[provider][address(token)] = 0;
 
         // Transfer tokens to provider
-        IERC20(token).safeTransfer(provider, balance);
+        token.safeTransfer(provider, balance);
 
-        emit FundsWithdrawn(provider, token, balance);
+        emit FundsWithdrawn(provider, address(token), balance);
     }
 
     /**
@@ -108,9 +110,9 @@ library ProviderFundsManager {
      */
     function getBalance(
         ProviderFundsManagerStorage storage storage_,
-        address provider,
-        address token
+        IERC20 token,
+        address provider
     ) internal view returns (uint256 balance) {
-        return storage_.providerBalances[provider][token];
+        return storage_.providerBalances[provider][address(token)];
     }
 }

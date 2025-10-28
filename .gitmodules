@@ -1,6 +1,6 @@
-[submodule "lib/fws-payments"]
-	path = lib/fws-payments
-	url = https://github.com/FilOzone/fws-payments
 [submodule "lib/forge-std"]
 	path = lib/forge-std
 	url = https://github.com/foundry-rs/forge-std
+[submodule "lib/filecoin-pay"]
+	path = lib/filecoin-pay
+	url = https://github.com/FilOzone/filecoin-pay

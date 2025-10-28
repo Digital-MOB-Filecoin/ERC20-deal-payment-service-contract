@@ -7,7 +7,7 @@ import "@openzeppelin/contracts-upgradeable/access/OwnableUpgradeable.sol";
 import "@openzeppelin/contracts-upgradeable/access/AccessControlUpgradeable.sol";
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 import {console} from "forge-std/console.sol";
 import {ClientFundsManager} from "./ClientFundsManager.sol";
 import {ProviderFundsManager} from "./ProviderFundsManager.sol";
@@ -50,7 +50,7 @@ contract EscrowContract is
     struct SettlementResult {
         uint256 totalSettledAmount;
         uint256 totalNetPayeeAmount;
-        uint256 totalPaymentFee;
+        uint256 totalNetworkFee;
         uint256 totalOperatorCommission;
         uint256 finalSettledEpoch;
         string note;
@@ -173,7 +173,7 @@ contract EscrowContract is
      * @param amount The amount of tokens being paid
      */
     function createPaymentRail(
-        address token,
+        IERC20 token,
         address from,
         uint256 amount
     ) external onlyRole(OPERATOR_ROLE) {
@@ -183,14 +183,14 @@ contract EscrowContract is
             address(this) != address(0),
             "Recipient address cannot be zero"
         );
-        uint256 railId = paymentRails[token][from];
+        uint256 railId = paymentRails[address(token)][from];
 
         require(
             railId == 0,
             "Rail already exists for this token and from address"
         );
 
-        Payments payments = Payments(paymentsContract);
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
 
         railId = payments.createRail(
             token,
@@ -202,7 +202,7 @@ contract EscrowContract is
         );
 
         // Store the rail ID in our mapping
-        paymentRails[token][from] = railId;
+        paymentRails[address(token)][from] = railId;
 
         payments.modifyRailPayment(
             railId,
@@ -210,7 +210,7 @@ contract EscrowContract is
             0 // One-time payment
         );
 
-        emit PaymentRailCreated(token, from, railId);
+        emit PaymentRailCreated(address(token), from, railId);
     }
 
     /**
@@ -220,28 +220,28 @@ contract EscrowContract is
      * @param amount The amount of tokens being paid
      */
     function updatePaymentRail(
-        address token,
+        IERC20 token,
         address from,
         uint256 amount
     ) external onlyRole(OPERATOR_ROLE) {
         require(paymentsContract != address(0), "Payments contract not set");
         require(from != address(0), "From address cannot be zero");
-        require(token != address(0), "Token address cannot be zero");
-        uint256 railId = paymentRails[token][from];
+        require(address(token) != address(0), "Token address cannot be zero");
+        uint256 railId = paymentRails[address(token)][from];
 
         require(
             railId != 0,
             "Rail does not exist for this token and from address"
         );
 
-        Payments payments = Payments(paymentsContract);
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
         payments.modifyRailPayment(
             railId,
             amount, // Update the regular payment rate to amount
             0 // One-time payment
         );
 
-        emit PaymentRailUpdated(token, from, railId, amount);
+        emit PaymentRailUpdated(address(token), from, railId, amount);
     }
 
     /**
@@ -252,7 +252,7 @@ contract EscrowContract is
      * @return result The settlement result containing all settlement data
      */
     function settlePaymentRail(
-        address token,
+        IERC20 token,
         address from,
         uint256 blockNumber
     )
@@ -263,30 +263,27 @@ contract EscrowContract is
     {
         require(paymentsContract != address(0), "Payments contract not set");
         require(from != address(0), "From address cannot be zero");
-        uint256 railId = paymentRails[token][from];
+        uint256 railId = paymentRails[address(token)][from];
         require(railId != 0, "Rail does not exist");
 
-        Payments payments = Payments(paymentsContract);
-        uint256 networkFee = payments.NETWORK_FEE();
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
 
         (
             result.totalSettledAmount,
             result.totalNetPayeeAmount,
             result.totalOperatorCommission,
+            result.totalNetworkFee,
             result.finalSettledEpoch,
             result.note
-        ) = payments.settleRail{value: networkFee}(railId, blockNumber);
-
-        // totalPaymentFee is not returned by the Payments contract, so we set it to 0
-        result.totalPaymentFee = 0;
+        ) = payments.settleRail(railId, blockNumber);
 
         emit PaymentRailSettled(
-            token,
+            address(token),
             from,
             railId,
             result.totalSettledAmount,
             result.totalNetPayeeAmount,
-            result.totalPaymentFee,
+            result.totalNetworkFee,
             result.totalOperatorCommission,
             result.finalSettledEpoch
         );
@@ -312,25 +309,21 @@ contract EscrowContract is
         require(paymentsContract != address(0), "Payments contract not set");
         require(railId != 0, "Rail does not exist");
 
-        Payments payments = Payments(paymentsContract);
-        uint256 networkFee = payments.NETWORK_FEE();
-
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
         (
             result.totalSettledAmount,
             result.totalNetPayeeAmount,
             result.totalOperatorCommission,
+            result.totalNetworkFee,
             result.finalSettledEpoch,
             result.note
-        ) = payments.settleRail{value: networkFee}(railId, blockNumber);
-
-        // totalPaymentFee is not returned by the Payments contract, so we set it to 0
-        result.totalPaymentFee = 0;
+        ) = payments.settleRail(railId, blockNumber);
 
         emit PaymentRailSettledByRailId(
             railId,
             result.totalSettledAmount,
             result.totalNetPayeeAmount,
-            result.totalPaymentFee,
+            result.totalNetworkFee,
             result.totalOperatorCommission,
             result.finalSettledEpoch
         );
@@ -344,15 +337,15 @@ contract EscrowContract is
      * @param amount The amount of tokens to withdraw
      */
     function withdrawTokens(
-        address token,
+        IERC20 token,
         uint256 amount
     ) external onlyRole(OPERATOR_ROLE) {
         require(paymentsContract != address(0), "Payments contract not set");
 
-        Payments payments = Payments(paymentsContract);
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
         payments.withdraw(token, amount);
 
-        emit TokensWithdrawn(token, amount);
+        emit TokensWithdrawn(address(token), amount);
     }
 
     /**
@@ -362,10 +355,10 @@ contract EscrowContract is
      * @return railId The rail ID for the token and payer combination
      */
     function getRailId(
-        address token,
+        IERC20 token,
         address from
     ) external view returns (uint256) {
-        return paymentRails[token][from];
+        return paymentRails[address(token)][from];
     }
 
     /**
@@ -375,10 +368,10 @@ contract EscrowContract is
      * @return exists True if the rail exists, false otherwise
      */
     function railExists(
-        address token,
+        IERC20 token,
         address from
     ) external view returns (bool) {
-        return paymentRails[token][from] != 0;
+        return paymentRails[address(token)][from] != 0;
     }
 
     /**
@@ -387,18 +380,18 @@ contract EscrowContract is
      * @param from The address of the payer whose rail to terminate
      */
     function terminatePaymentRail(
-        address token,
+        IERC20 token,
         address from
     ) external onlyRole(OPERATOR_ROLE) {
         require(paymentsContract != address(0), "Payments contract not set");
         require(from != address(0), "From address cannot be zero");
 
-        uint256 railId = paymentRails[token][from];
+        uint256 railId = paymentRails[address(token)][from];
         require(railId != 0, "Rail does not exist");
 
-        Payments payments = Payments(paymentsContract);
+        FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
         payments.terminateRail(railId);
-        paymentRails[token][from] = 0;
+        paymentRails[address(token)][from] = 0;
     }
 
     // ==================== CLIENT FUNDS MANAGER FUNCTIONS ====================
@@ -410,11 +403,11 @@ contract EscrowContract is
      * @param amount The amount of tokens to deposit as security deposit
      */
     function depositSecurityDeposit(
+        IERC20 token,
         address client,
-        address token,
         uint256 amount
     ) external {
-        clientFundsManagerStorage.depositSecurityDeposit(client, token, amount);
+        clientFundsManagerStorage.depositSecurityDeposit(token, client, amount);
     }
 
     /**
@@ -425,14 +418,14 @@ contract EscrowContract is
      * @param refundAmount The amount to add to refund
      */
     function unlockSecurityDeposit(
+        IERC20 token,
         address client,
-        address token,
         uint256 unlockAmount,
         uint256 refundAmount
     ) external onlyRole(OPERATOR_ROLE) {
         clientFundsManagerStorage.unlockSecurityDeposit(
-            client,
             token,
+            client,
             unlockAmount,
             refundAmount
         );
@@ -445,18 +438,18 @@ contract EscrowContract is
      * @param changeValue The value to change refund by (positive to increase, negative to decrease)
      */
     function changeRefundValue(
+        IERC20 token,
         address client,
-        address token,
         int256 changeValue
     ) external onlyRole(OPERATOR_ROLE) {
-        clientFundsManagerStorage.changeRefundValue(client, token, changeValue);
+        clientFundsManagerStorage.changeRefundValue(token, client, changeValue);
     }
 
     /**
      * @notice Withdraw unlocked funds and refund for a client
      * @param token The ERC20 token address to withdraw
      */
-    function withdrawClientFunds(address token) external {
+    function withdrawClientFunds(IERC20 token) external {
         clientFundsManagerStorage.withdrawFunds(token);
     }
 
@@ -467,10 +460,10 @@ contract EscrowContract is
      * @return funds The ClientFunds struct containing all fund information
      */
     function getClientFunds(
-        address client,
-        address token
+        IERC20 token,
+        address client
     ) external view returns (ClientFundsManager.ClientFunds memory funds) {
-        return clientFundsManagerStorage.getClientFunds(client, token);
+        return clientFundsManagerStorage.getClientFunds(token, client);
     }
 
     /**
@@ -480,10 +473,10 @@ contract EscrowContract is
      * @return withdrawableAmount The total amount that can be withdrawn
      */
     function getClientWithdrawableAmount(
-        address client,
-        address token
+        IERC20 token,
+        address client
     ) external view returns (uint256 withdrawableAmount) {
-        return clientFundsManagerStorage.getWithdrawableAmount(client, token);
+        return clientFundsManagerStorage.getWithdrawableAmount(token, client);
     }
 
     // ==================== PROVIDER FUNDS MANAGER FUNCTIONS ====================
@@ -495,18 +488,18 @@ contract EscrowContract is
      * @param changeValue The value to change balance by (positive to increase, negative to decrease)
      */
     function updateProviderBalance(
+        IERC20 token,
         address provider,
-        address token,
         int256 changeValue
     ) external onlyRole(OPERATOR_ROLE) {
-        providerFundsManagerStorage.updateBalance(provider, token, changeValue);
+        providerFundsManagerStorage.updateBalance(token, provider, changeValue);
     }
 
     /**
      * @notice Withdraw full balance for a provider
      * @param token The ERC20 token address to withdraw
      */
-    function withdrawProviderFunds(address token) external {
+    function withdrawProviderFunds(IERC20 token) external {
         providerFundsManagerStorage.withdrawFunds(token);
     }
 
@@ -517,10 +510,10 @@ contract EscrowContract is
      * @return balance The provider's balance for the specified token
      */
     function getProviderBalance(
-        address provider,
-        address token
+        IERC20 token,
+        address provider
     ) external view returns (uint256 balance) {
-        return providerFundsManagerStorage.getBalance(provider, token);
+        return providerFundsManagerStorage.getBalance(token, provider);
     }
 
     /**
@@ -557,12 +550,12 @@ contract EscrowContract is
      * @param amount The amount to add to totalToPay (can be positive or negative)
      */
     function updateFee(
-        address token,
+        IERC20 token,
         int256 amount
     ) external onlyRole(OPERATOR_ROLE) {
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
-        FeeItem storage feeItem = fees[token];
+        FeeItem storage feeItem = fees[address(token)];
 
         if (amount < 0 && feeItem.totalToPay == 0) {
             require(false, "Cannot reduce fee for non-existent token");
@@ -579,7 +572,7 @@ contract EscrowContract is
             feeItem.totalToPay -= absAmount;
         }
 
-        emit FeeUpdated(token, amount, feeItem.totalToPay);
+        emit FeeUpdated(address(token), amount, feeItem.totalToPay);
     }
 
     /**
@@ -603,7 +596,7 @@ contract EscrowContract is
      * @notice Withdraw accumulated fees for a specific token
      * @param token The ERC20 token address to withdraw fees for
      */
-    function withdrawFees(address token) external {
+    function withdrawFees(IERC20 token) external {
         require(
             msg.sender == feeBeneficiaryAddress,
             "Only fee beneficiary can withdraw fees"
@@ -612,9 +605,9 @@ contract EscrowContract is
             feeBeneficiaryAddress != address(0),
             "Fee beneficiary address not set"
         );
-        require(token != address(0), "Token address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
 
-        FeeItem storage feeItem = fees[token];
+        FeeItem storage feeItem = fees[address(token)];
         uint256 withdrawableAmount = feeItem.totalToPay - feeItem.totalPaid;
 
         require(withdrawableAmount > 0, "No fees to withdraw");
@@ -623,8 +616,12 @@ contract EscrowContract is
         feeItem.totalPaid = feeItem.totalToPay;
 
         // Transfer tokens to fee beneficiary
-        IERC20(token).safeTransfer(feeBeneficiaryAddress, withdrawableAmount);
+        token.safeTransfer(feeBeneficiaryAddress, withdrawableAmount);
 
-        emit FeesWithdrawn(token, feeBeneficiaryAddress, withdrawableAmount);
+        emit FeesWithdrawn(
+            address(token),
+            feeBeneficiaryAddress,
+            withdrawableAmount
+        );
     }
 }

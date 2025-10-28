@@ -5,7 +5,7 @@ import "forge-std/Test.sol";
 import "../src/EscrowContract.sol";
 import "../src/test/mocks/MockERC20.sol";
 import "@openzeppelin/contracts/proxy/ERC1967/ERC1967Proxy.sol";
-import {Payments} from "@fws-payments/Payments.sol";
+import {FilecoinPayV1} from "@filecoin-pay/FilecoinPayV1.sol";
 import "./helpers/RailTestHelper.sol";
 
 contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
@@ -13,7 +13,7 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
     ERC1967Proxy escrowProxy;
     EscrowContract proxyEscrow;
 
-    Payments proxyPayments;
+    FilecoinPayV1 proxyPayments;
 
     MockERC20 token;
 
@@ -34,7 +34,7 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
         token.mint(client, 200 ether);
 
         // Deploy Payments contract
-        proxyPayments = new Payments();
+        proxyPayments = new FilecoinPayV1();
 
         // Deploy EscrowContract
         implementation = new EscrowContract();
@@ -50,7 +50,7 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
         // Add operator role to EscrowContract for Payments
         vm.startPrank(client);
         proxyPayments.setOperatorApproval(
-            address(token),
+            IERC20(token),
             address(proxyEscrow),
             true,
             20 ether,
@@ -73,12 +73,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Client deposits funds to Payments contract for the payment
         vm.startPrank(client);
-        proxyPayments.deposit(address(token), client, 20 ether);
+        proxyPayments.deposit(IERC20(token), client, 20 ether);
         vm.stopPrank();
 
         // Register payment
         vm.prank(operator);
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Validate that the rail was created correctly
         validateRailCreation(
@@ -91,15 +91,22 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         vm.roll(10);
 
-        uint256 networkFee = proxyPayments.NETWORK_FEE();
+        uint256 NETWORK_FEE_NUMERATOR = proxyPayments.NETWORK_FEE_NUMERATOR();
+        uint256 NETWORK_FEE_DENOMINATOR = proxyPayments
+            .NETWORK_FEE_DENOMINATOR();
+
+        uint256 expectedSettledAmount = 45;
+        uint256 fee = (expectedSettledAmount *
+            NETWORK_FEE_NUMERATOR +
+            (NETWORK_FEE_DENOMINATOR - 1)) / NETWORK_FEE_DENOMINATOR;
 
         EscrowContract.SettlementResult memory result = proxyEscrow
-            .settlePaymentRail{value: networkFee}(address(token), client, 10);
+            .settlePaymentRail(IERC20(token), client, 10);
         validateSettlementResult(
             result,
-            45, // expectedSettledAmount
-            45, // expectedNetPayeeAmount
-            0, // expectedPaymentFee
+            expectedSettledAmount, // expectedSettledAmount
+            expectedSettledAmount - fee, // expectedNetPayeeAmount
+            fee, // expectedPaymentFee
             0, // expectedOperatorCommission
             10, // expectedFinalEpoch
             "" // expectedNote
@@ -111,12 +118,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
             "Proxy token balance should be 0"
         );
 
-        proxyEscrow.withdrawTokens(address(token), 45 wei);
+        proxyEscrow.withdrawTokens(IERC20(token), expectedSettledAmount - fee);
 
         assertEq(
             token.balanceOf(address(proxyEscrow)),
-            45,
-            "Proxy token balance should be 45"
+            expectedSettledAmount - fee,
+            "Proxy token balance should be expectedSettledAmount - fee"
         );
     }
 
@@ -133,12 +140,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Client deposits funds to Payments contract for the payment
         vm.startPrank(client);
-        proxyPayments.deposit(address(token), client, 20 ether);
+        proxyPayments.deposit(IERC20(token), client, 20 ether);
         vm.stopPrank();
 
         // Register payment
         vm.prank(operator);
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Validate that the rail was created correctly
         uint256 railId = validateRailCreation(
@@ -151,9 +158,9 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         vm.roll(10);
 
-        proxyEscrow.updatePaymentRail(address(token), client, 2 * amount);
+        proxyEscrow.updatePaymentRail(IERC20(token), client, 2 * amount);
 
-        Payments.RailView memory railView = proxyPayments.getRail(railId);
+        FilecoinPayV1.RailView memory railView = proxyPayments.getRail(railId);
         assertEq(
             railView.paymentRate,
             2 * amount,
@@ -174,12 +181,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Client deposits funds to Payments contract for the payment
         vm.startPrank(client);
-        proxyPayments.deposit(address(token), client, 20 ether);
+        proxyPayments.deposit(IERC20(token), client, 20 ether);
         vm.stopPrank();
 
         // Register payment
         vm.prank(operator);
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Validate that the rail was created correctly
         uint256 railId = validateRailCreation(
@@ -205,25 +212,32 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
             "Proxy token balance should be 0"
         );
 
-        uint256 networkFee = proxyPayments.NETWORK_FEE();
+        uint256 NETWORK_FEE_NUMERATOR = proxyPayments.NETWORK_FEE_NUMERATOR();
+        uint256 NETWORK_FEE_DENOMINATOR = proxyPayments
+            .NETWORK_FEE_DENOMINATOR();
+
+        uint256 expectedSettledAmount = 45;
+        uint256 fee = (expectedSettledAmount *
+            NETWORK_FEE_NUMERATOR +
+            (NETWORK_FEE_DENOMINATOR - 1)) / NETWORK_FEE_DENOMINATOR;
         EscrowContract.SettlementResult memory result = proxyEscrow
-            .settlePaymentRail{value: networkFee}(address(token), client, 10);
+            .settlePaymentRail(IERC20(token), client, 10);
         validateSettlementResult(
             result,
-            45, // expectedSettledAmount
-            45, // expectedNetPayeeAmount
-            0, // expectedPaymentFee
+            expectedSettledAmount, // expectedSettledAmount
+            expectedSettledAmount - fee, // expectedNetPayeeAmount
+            fee, // expectedPaymentFee
             0, // expectedOperatorCommission
             10, // expectedFinalEpoch
             "terminated rail fully settled and finalized." // expectedNote
         );
 
-        proxyEscrow.withdrawTokens(address(token), 45 wei);
+        proxyEscrow.withdrawTokens(IERC20(token), expectedSettledAmount - fee);
 
         assertEq(
             token.balanceOf(address(proxyEscrow)),
-            45,
-            "Proxy token balance should be 45"
+            expectedSettledAmount - fee,
+            "Proxy token balance should be expectedSettledAmount - fee"
         );
 
         vm.stopPrank();
@@ -242,12 +256,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Client deposits funds to Payments contract for the payment
         vm.startPrank(client);
-        proxyPayments.deposit(address(token), client, 40 wei);
+        proxyPayments.deposit(IERC20(token), client, 40 wei);
         vm.stopPrank();
 
         // Register payment
         vm.prank(operator);
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Validate that the rail was created correctly
         uint256 railId = validateRailCreation(
@@ -265,7 +279,7 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
         vm.expectRevert();
         proxyPayments.terminateRail(railId);
 
-        proxyPayments.deposit(address(token), client, 40 wei);
+        proxyPayments.deposit(IERC20(token), client, 40 wei);
         proxyPayments.terminateRail(railId);
         vm.stopPrank();
 
@@ -277,25 +291,33 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
             "Proxy token balance should be 0"
         );
 
-        uint256 networkFee = proxyPayments.NETWORK_FEE();
+        uint256 NETWORK_FEE_NUMERATOR = proxyPayments.NETWORK_FEE_NUMERATOR();
+        uint256 NETWORK_FEE_DENOMINATOR = proxyPayments
+            .NETWORK_FEE_DENOMINATOR();
+
+        uint256 expectedSettledAmount = 45;
+        uint256 fee = (expectedSettledAmount *
+            NETWORK_FEE_NUMERATOR +
+            (NETWORK_FEE_DENOMINATOR - 1)) / NETWORK_FEE_DENOMINATOR;
+
         EscrowContract.SettlementResult memory result = proxyEscrow
-            .settlePaymentRail{value: networkFee}(address(token), client, 10);
+            .settlePaymentRail(IERC20(token), client, 10);
         validateSettlementResult(
             result,
-            45, // expectedSettledAmount
-            45, // expectedNetPayeeAmount
-            0, // expectedPaymentFee
+            expectedSettledAmount, // expectedSettledAmount
+            expectedSettledAmount - fee, // expectedNetPayeeAmount
+            fee, // expectedPaymentFee
             0, // expectedOperatorCommission
             10, // expectedFinalEpoch
             "terminated rail fully settled and finalized." // expectedNote
         );
 
-        proxyEscrow.withdrawTokens(address(token), 45 wei);
+        proxyEscrow.withdrawTokens(IERC20(token), expectedSettledAmount - fee);
 
         assertEq(
             token.balanceOf(address(proxyEscrow)),
-            45,
-            "Proxy token balance should be 45"
+            expectedSettledAmount - fee,
+            "Proxy token balance should be expectedSettledAmount - fee"
         );
 
         vm.stopPrank();
@@ -314,12 +336,12 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Client deposits funds to Payments contract for the payment
         vm.startPrank(client);
-        proxyPayments.deposit(address(token), client, 40 wei);
+        proxyPayments.deposit(IERC20(token), client, 40 wei);
         vm.stopPrank();
 
         // Register payment
         vm.startPrank(operator);
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Validate that the rail was created correctly
         validateRailCreation(
@@ -329,10 +351,10 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
             client,
             amount
         );
-        uint256 railId = proxyEscrow.getRailId(address(token), client);
+        uint256 railId = proxyEscrow.getRailId(IERC20(token), client);
         vm.roll(10);
         // Terminate the payment rail
-        proxyEscrow.terminatePaymentRail(address(token), client);
+        proxyEscrow.terminatePaymentRail(IERC20(token), client);
 
         assertEq(
             token.balanceOf(address(proxyEscrow)),
@@ -340,26 +362,34 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
             "Proxy token balance should be 0"
         );
 
-        uint256 networkFee = proxyPayments.NETWORK_FEE();
         EscrowContract.SettlementResult memory result = proxyEscrow
-            .settlePaymentRailByRailId{value: networkFee}(railId, 10);
+            .settlePaymentRailByRailId(railId, 10);
+
+        uint256 NETWORK_FEE_NUMERATOR = proxyPayments.NETWORK_FEE_NUMERATOR();
+        uint256 NETWORK_FEE_DENOMINATOR = proxyPayments
+            .NETWORK_FEE_DENOMINATOR();
+
+        uint256 expectedSettledAmount = 40;
+        uint256 fee = (expectedSettledAmount *
+            NETWORK_FEE_NUMERATOR +
+            (NETWORK_FEE_DENOMINATOR - 1)) / NETWORK_FEE_DENOMINATOR;
 
         validateSettlementResult(
             result,
-            40, // expectedSettledAmount
-            40, // expectedNetPayeeAmount
-            0, // expectedPaymentFee
+            expectedSettledAmount, // expectedSettledAmount
+            expectedSettledAmount - fee, // expectedNetPayeeAmount
+            fee, // expectedPaymentFee
             0, // expectedOperatorCommission
             9, // expectedFinalEpoch
             "terminated rail fully settled and finalized." // expectedNote
         );
 
-        proxyEscrow.withdrawTokens(address(token), 40 wei);
+        proxyEscrow.withdrawTokens(IERC20(token), expectedSettledAmount - fee);
 
         assertEq(
             token.balanceOf(address(proxyEscrow)),
-            40,
-            "Proxy token balance should be 40"
+            expectedSettledAmount - fee,
+            "Proxy token balance should be expectedSettledAmount - fee"
         );
 
         vm.stopPrank();
@@ -371,20 +401,20 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
     function testTerminatePaymentRail() public {
         vm.startPrank(client);
         token.approve(address(proxyPayments), 100 ether);
-        proxyPayments.deposit(address(token), client, 100 ether);
+        proxyPayments.deposit(IERC20(token), client, 100 ether);
         vm.stopPrank();
 
         uint256 amount = 5 wei;
 
         // Register payment rail
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Check that the rail exists
-        uint256 railId = proxyEscrow.getRailId(address(token), client);
+        uint256 railId = proxyEscrow.getRailId(IERC20(token), client);
         assertTrue(railId != 0, "Rail should exist");
 
         // Verify rail exists
-        bool railExists = proxyEscrow.railExists(address(token), client);
+        bool railExists = proxyEscrow.railExists(IERC20(token), client);
         assertTrue(railExists, "Rail should exist");
 
         // Add operator to escrow contract
@@ -392,10 +422,10 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Terminate the payment rail through EscrowContract
         vm.prank(operator);
-        proxyEscrow.terminatePaymentRail(address(token), client);
+        proxyEscrow.terminatePaymentRail(IERC20(token), client);
 
         // Verify the rail is terminated by checking the rail view
-        Payments.RailView memory railView = proxyPayments.getRail(railId);
+        FilecoinPayV1.RailView memory railView = proxyPayments.getRail(railId);
         assertTrue(
             railView.endEpoch > 0,
             "Rail should be terminated (endEpoch > 0)"
@@ -408,20 +438,20 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
     function testCreatePaymentRailAfterTermination() public {
         vm.startPrank(client);
         token.approve(address(proxyPayments), 100 ether);
-        proxyPayments.deposit(address(token), client, 100 ether);
+        proxyPayments.deposit(IERC20(token), client, 100 ether);
         vm.stopPrank();
 
         uint256 amount = 5 wei;
 
         // Register payment rail
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Check that the rail exists
-        uint256 railId = proxyEscrow.getRailId(address(token), client);
+        uint256 railId = proxyEscrow.getRailId(IERC20(token), client);
         assertTrue(railId != 0, "Rail should exist by rail ID");
 
         // Verify rail exists
-        bool railExists = proxyEscrow.railExists(address(token), client);
+        bool railExists = proxyEscrow.railExists(IERC20(token), client);
         assertTrue(railExists, "Rail should exist by rail existence check");
 
         // Add operator to escrow contract
@@ -429,27 +459,27 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
 
         // Terminate the payment rail through EscrowContract
         vm.prank(operator);
-        proxyEscrow.terminatePaymentRail(address(token), client);
+        proxyEscrow.terminatePaymentRail(IERC20(token), client);
 
         // Verify the rail is terminated by checking the rail view
-        Payments.RailView memory railView = proxyPayments.getRail(railId);
+        FilecoinPayV1.RailView memory railView = proxyPayments.getRail(railId);
         assertTrue(
             railView.endEpoch > 0,
             "Rail should be terminated (endEpoch > 0)"
         );
 
         // Verify rail exists
-        railExists = proxyEscrow.railExists(address(token), client);
+        railExists = proxyEscrow.railExists(IERC20(token), client);
         assertFalse(railExists, "Rail should not exist by existence check");
 
         // Register payment rail
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
-        uint256 railId2 = proxyEscrow.getRailId(address(token), client);
+        uint256 railId2 = proxyEscrow.getRailId(IERC20(token), client);
         assertTrue(railId2 != 0, "Rail 2 should exist by rail ID");
 
         // Verify rail exists
-        bool railExists2 = proxyEscrow.railExists(address(token), client);
+        bool railExists2 = proxyEscrow.railExists(IERC20(token), client);
         assertTrue(railExists2, "Rail 2 should exist by rail existence check");
         assertNotEq(railId2, railId, "Rail IDs should not be equal");
     }
@@ -461,18 +491,18 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
     function testTerminatePaymentRailOnlyOperator() public {
         vm.startPrank(client);
         token.approve(address(proxyPayments), 100 ether);
-        proxyPayments.deposit(address(token), client, 100 ether);
+        proxyPayments.deposit(IERC20(token), client, 100 ether);
         vm.stopPrank();
 
         uint256 amount = 5 wei;
 
         // Register payment rail
-        proxyEscrow.createPaymentRail(address(token), client, amount);
+        proxyEscrow.createPaymentRail(IERC20(token), client, amount);
 
         // Try to terminate as non-operator - should fail
         vm.prank(client);
         vm.expectRevert();
-        proxyEscrow.terminatePaymentRail(address(token), client);
+        proxyEscrow.terminatePaymentRail(IERC20(token), client);
     }
 
     /**
@@ -485,6 +515,6 @@ contract EscrowContractPaymentManagerTest is Test, RailTestHelper {
         // Try to terminate non-existent rail - should fail
         vm.prank(operator);
         vm.expectRevert("Rail does not exist");
-        proxyEscrow.terminatePaymentRail(address(token), client);
+        proxyEscrow.terminatePaymentRail(IERC20(token), client);
     }
 }
