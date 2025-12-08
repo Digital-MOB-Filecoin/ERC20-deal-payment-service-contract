@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {IERC20} from "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import {IERC20Permit} from "@openzeppelin/contracts/token/ERC20/extensions/IERC20Permit.sol";
 import {SafeERC20} from "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 
 /**
@@ -66,6 +67,52 @@ library ClientFundsManager {
         require(client != address(0), "Client address cannot be zero");
         require(address(token) != address(0), "Token address cannot be zero");
         require(amount > 0, "Amount must be greater than zero");
+
+        // Transfer tokens from client to this contract
+        token.safeTransferFrom(msg.sender, address(this), amount);
+
+        // Increase security deposit
+        storage_.clientFunds[client][address(token)].securityDeposit += amount;
+
+        emit SecurityDepositDeposited(client, address(token), amount);
+    }
+
+    /**
+     * @notice Deposit security deposit for a client in a specific token using ERC20 permit
+     * @param storage_ The storage struct containing client funds manager data
+     * @param client The address of the client
+     * @param token The ERC20 token address (must support ERC20Permit)
+     * @param amount The amount of tokens to deposit as security deposit
+     * @param deadline The deadline timestamp for the permit signature
+     * @param v The recovery byte of the signature
+     * @param r Half of the ECDSA signature pair
+     * @param s Half of the ECDSA signature pair
+     */
+    function depositSecurityDepositWithPermit(
+        ClientFundsManagerStorage storage storage_,
+        IERC20 token,
+        address client,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) internal {
+        require(client != address(0), "Client address cannot be zero");
+        require(address(token) != address(0), "Token address cannot be zero");
+        require(amount > 0, "Amount must be greater than zero");
+
+        // Call permit to approve this contract to spend tokens
+        // This uses the ERC20Permit extension (EIP-2612)
+        IERC20Permit(address(token)).permit(
+            msg.sender,
+            address(this),
+            amount,
+            deadline,
+            v,
+            r,
+            s
+        );
 
         // Transfer tokens from client to this contract
         token.safeTransferFrom(msg.sender, address(this), amount);

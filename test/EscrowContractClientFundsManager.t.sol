@@ -83,6 +83,75 @@ contract EscrowContractClientFundsManagerTest is Test {
     }
 
     /**
+     * @notice Test deposit security deposit functionality using ERC20 permit
+     * @dev This function tests the depositSecurityDepositWithPermit function in ClientFundsManagerStorage
+     */
+    function testDepositSecurityDepositWithPermit() public {
+        uint256 amount = 1 ether;
+        uint256 deadline = block.timestamp + 1 days;
+        uint256 clientPrivateKey = 0xA11CE;
+
+        // Setup client with known private key
+        address clientAddress = vm.addr(clientPrivateKey);
+        token.mint(clientAddress, 100 ether);
+
+        uint256 nonce = token.nonces(clientAddress);
+
+        // Create permit signature
+        bytes32 structHash = keccak256(
+            abi.encode(
+                keccak256(
+                    "Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)"
+                ),
+                clientAddress,
+                address(proxyEscrow),
+                amount,
+                nonce,
+                deadline
+            )
+        );
+
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", token.DOMAIN_SEPARATOR(), structHash)
+        );
+
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(clientPrivateKey, digest);
+
+        // Client deposits security deposit with permit
+        vm.prank(clientAddress);
+        proxyEscrow.depositSecurityDepositWithPermit(
+            IERC20(token),
+            clientAddress,
+            amount,
+            deadline,
+            v,
+            r,
+            s
+        );
+
+        // Check that the security deposit was recorded
+        ClientFundsManager.ClientFunds memory clientFunds = proxyEscrow
+            .getClientFunds(IERC20(token), clientAddress);
+        assertEq(
+            clientFunds.securityDeposit,
+            amount,
+            "Security deposit should match"
+        );
+
+        // Verify tokens were transferred
+        assertEq(
+            token.balanceOf(address(proxyEscrow)),
+            amount,
+            "Escrow contract should have received tokens"
+        );
+        assertEq(
+            token.balanceOf(clientAddress),
+            100 ether - amount,
+            "Client balance should have decreased"
+        );
+    }
+
+    /**
      * @notice Test unlock security deposit functionality
      * @dev This function tests the unlockSecurityDeposit function in ClientFundsManagerStorage
      */

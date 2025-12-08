@@ -411,6 +411,36 @@ contract EscrowContract is
     }
 
     /**
+     * @notice Deposit security deposit for a client in a specific token using ERC20 permit
+     * @param client The address of the client
+     * @param token The ERC20 token address (must support ERC20Permit)
+     * @param amount The amount of tokens to deposit as security deposit
+     * @param deadline The deadline timestamp for the permit signature
+     * @param v The recovery byte of the signature
+     * @param r Half of the ECDSA signature pair
+     * @param s Half of the ECDSA signature pair
+     */
+    function depositSecurityDepositWithPermit(
+        IERC20 token,
+        address client,
+        uint256 amount,
+        uint256 deadline,
+        uint8 v,
+        bytes32 r,
+        bytes32 s
+    ) external {
+        clientFundsManagerStorage.depositSecurityDepositWithPermit(
+            token,
+            client,
+            amount,
+            deadline,
+            v,
+            r,
+            s
+        );
+    }
+
+    /**
      * @notice Unlock security deposit and optionally set refund amount
      * @param client The address of the client
      * @param token The ERC20 token address
