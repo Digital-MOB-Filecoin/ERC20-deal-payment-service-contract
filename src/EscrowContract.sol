@@ -83,6 +83,11 @@ contract EscrowContract is
         uint256 totalOperatorCommission,
         uint256 finalSettledEpoch
     );
+    event PaymentRailTerminated(
+        uint256 indexed railId,
+        address indexed by,
+        uint256 endEpoch
+    );
 
     event PaymentRailSettledByRailId(
         uint256 indexed railId,
@@ -392,6 +397,10 @@ contract EscrowContract is
         FilecoinPayV1 payments = FilecoinPayV1(paymentsContract);
         payments.terminateRail(railId);
         paymentRails[address(token)][from] = 0;
+
+        FilecoinPayV1.RailView memory railView = payments.getRail(railId);
+
+        emit PaymentRailTerminated(railId, msg.sender, railView.endEpoch);
     }
 
     // ==================== CLIENT FUNDS MANAGER FUNCTIONS ====================
@@ -654,4 +663,7 @@ contract EscrowContract is
             withdrawableAmount
         );
     }
+
+    // Storage gap for future upgrades
+    uint256[50] private __gap;
 }
