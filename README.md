@@ -46,6 +46,13 @@ foundry-solidity-project
    forge script script/Deploy.s.sol --broadcast
    ```
 
+6. **Deployed Mainnet Instance**: 
+   ```
+   Escrow contract: 0x261355eAb90eD0f9aeA99A00470406e48C49bd5c
+   Operator address: 0x38893164cc4b811F60E324F3cFBDF6D164F2DD70
+   Payments contract address: 0x23b1e018F08BB982348b15a86ee926eEBf7F4DAa
+   ```
+
 ## Usage
 - The `EscrowContract.sol` contract allows users to create payment rails, deposit funds, withdraw funds, and manage operator approvals.
 - The `EscrowContract.t.sol` file contains various test cases to validate the functionality of the EscrowContract contract.
